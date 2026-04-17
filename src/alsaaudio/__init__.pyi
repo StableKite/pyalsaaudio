@@ -1,4 +1,4 @@
-from typing import Final, final
+from typing import Final, TypedDict, final
 
 PCM_PLAYBACK: Final[int]
 PCM_CAPTURE: Final[int]
@@ -82,35 +82,77 @@ def mixers(cardindex: int = -1, device: str = 'default') -> list[str]: ...
 def asoundlib_version() -> str: ...
 
 def card_indexes() -> list[int]: ...
-def card_name(index: int): ...
+def card_name(index: int) -> tuple[str, str]: ...
 
-_DEPRECATED = ...
+
+_PCMInfo = TypedDict(
+    "_PCMInfo",
+    {
+        "name": str,
+        "card_no": int,
+        "device_no": int,
+        "subdevice_no": int,
+        "state": str,
+        "access_type": str,
+        "(call value) type": int,
+        "(call value) type_name": str,
+        "(call value) mode": int,
+        "(call value) mode_name": str,
+        "format": int,
+        "format_name": str,
+        "format_description": str,
+        "subformat_name": str,
+        "subformat_description": str,
+        "channels": int,
+        "rate": int,
+        "period_time": int,
+        "period_size": int,
+        "buffer_time": int,
+        "buffer_size": int,
+        "get_periods": int,
+        "rate_numden": tuple[int, int],
+        "significant_bits": int,
+        "nominal_bits": int,
+        "physical_bits": int,
+        "is_batch": bool,
+        "is_block_transfer": bool,
+        "is_double": bool,
+        "is_half_duplex": bool,
+        "is_joint_duplex": bool,
+        "can_overrange": bool,
+        "can_mmap_sample_resolution": bool,
+        "can_pause": bool,
+        "can_resume": bool,
+        "can_sync_start": bool,
+    },
+    total=False,
+)
 
 @final
 class PCM:
-	def __init__(
-		self,
+	def __new__(
+		cls,
 		type: int = PCM_PLAYBACK,
 		mode: int = PCM_NORMAL,
 		device: str = "default",
 		cardindex: int = -1,
-		card: str = _DEPRECATED,
+		card: str = ...,
 		rate: int = 44100,
 		channels: int = 2,
 		format: int = PCM_FORMAT_S16_LE,
 		periodsize: int = 32,
 		periods: int = 4,
-	) -> None: ...
+	) -> PCM: ...
 	def close(self) -> None: ...
 	def dumpinfo(self) -> None: ...
-	def info(self) -> dict: ...
+	def info(self) -> _PCMInfo: ...
 	def state(self) -> int: ...
 	def htimestamp(self) -> tuple[int, int, int]: ...
 	def set_tstamp_mode(self, mode: int = PCM_TSTAMP_ENABLE) -> None: ...
 	def get_tstamp_mode(self) -> int: ...
 	def set_tstamp_type(self, type: int = PCM_TSTAMP_TYPE_GETTIMEOFDAY) -> None: ...
 	def get_tstamp_type(self) -> int: ...
-	def getformats(self) -> dict: ...
+	def getformats(self) -> dict[str, int]: ...
 	def getratebounds(self) -> tuple[int, int]: ...
 	def getrates(self) -> int | tuple[int, int] | list[int]: ...
 	def getchannels(self) -> list[int]: ...
@@ -132,7 +174,7 @@ class PCM:
 
 @final
 class Mixer:
-	def __init__(self, control: str = 'Master', id: int = 0, cardindex: int = -1, device: str = 'default') -> None: ...
+	def __new__(cls, control: str = 'Master', id: int = 0, cardindex: int = -1, device: str = 'default') -> Mixer: ...
 	def cardname(self) -> str: ...
 	def close(self) -> None: ...
 	def mixer(self) -> str: ...
