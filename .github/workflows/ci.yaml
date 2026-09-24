@@ -367,40 +367,23 @@ jobs:
           print(f"Independent Linux sdist OK: {sdist.name}")
           PY
 
-      - name: Rebuild native wheel from sdist with cibuildwheel
+      - name: Rebuild native wheel directly from sdist with cibuildwheel
         shell: bash
         env:
           CIBW_BUILD: ${{ matrix.build_selector }}
           CIBW_TEST_COMMAND: >-
-            python {project}/ci_wheel_smoke.py
+            python {package}/ci_wheel_smoke.py
             0.11.1
             --require-free-threaded
         run: |
           set -euo pipefail
 
-          source_root="$RUNNER_TEMP/pyalsaaudio-sdist-root"
-          rm -rf "$source_root"
-          mkdir -p "$source_root"
+          sdist="platform-sdist/pyalsaaudio-${PACKAGE_VERSION}.tar.gz"
 
-          tar -xzf \
-            "platform-sdist/pyalsaaudio-${PACKAGE_VERSION}.tar.gz" \
-            -C "$source_root"
-
-          mapfile -t roots < <(
-            find "$source_root" \
-              -mindepth 1 \
-              -maxdepth 1 \
-              -type d \
-              -print
-          )
-
-          if [ "${#roots[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one extracted sdist root."
-            exit 1
-          fi
+          test -f "$sdist"
 
           python -m cibuildwheel \
-            "${roots[0]}" \
+            "$sdist" \
             --platform linux \
             --output-dir wheelhouse
 
