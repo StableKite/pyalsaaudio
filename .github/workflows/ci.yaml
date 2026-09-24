@@ -1,0 +1,717 @@
+name: Build and publish to devpi
+
+on:
+  push:
+    branches:
+      - "main"
+
+permissions:
+  contents: read
+
+env:
+  DEVPI_SERVER: https://stablekite.com:4438/
+  DEVPI_TARGET_INDEX: https://stablekite.com:4438/StableKite/index/
+  PACKAGE_VERSION: "0.11.1"
+  CIBW_VERSION: "4.2.1"
+
+jobs:
+  windows-source:
+    name: Windows x86_64 / source and unsupported-runtime gate
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.14t
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14t"
+
+      - name: Install build tools
+        run: >-
+          python -m pip install --upgrade
+          build
+          wheel
+
+      - name: Syntax-check Python sources without creating bytecode
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          paths = sorted(Path("src/alsaaudio").rglob("*.py"))
+          paths.append(Path("ci_wheel_smoke.py"))
+
+          for path in paths:
+              source = path.read_text(encoding="utf-8")
+              compile(source, str(path), "exec")
+
+          print(f"Syntax-checked {len(paths)} Python source files")
+          '@ | python -
+
+      - name: Build Windows source distribution and typing-only wheel
+        run: |
+          python -m build --sdist --outdir dist
+          python -m build --wheel --outdir windows-wheel
+
+      - name: Verify Windows packaging policy
+        shell: pwsh
+        run: |
+          @'
+          from email.parser import BytesParser
+          from email.policy import default
+          from pathlib import Path
+          import os
+          import tarfile
+          import zipfile
+
+          version = os.environ["PACKAGE_VERSION"]
+
+          sdist_dir = Path("dist")
+          wheel_dir = Path("windows-wheel")
+
+          sdist = sdist_dir / f"pyalsaaudio-{version}.tar.gz"
+          wheel = wheel_dir / f"pyalsaaudio-{version}-py3-none-any.whl"
+
+          if list(sdist_dir.glob("*.tar.gz")) != [sdist]:
+              raise SystemExit(
+                  f"Unexpected Windows sdist set: {list(sdist_dir.glob('*.tar.gz'))}"
+              )
+
+          if list(wheel_dir.glob("*.whl")) != [wheel]:
+              raise SystemExit(
+                  f"Unexpected Windows wheel set: {list(wheel_dir.glob('*.whl'))}"
+              )
+
+          with zipfile.ZipFile(wheel) as archive:
+              bad = archive.testzip()
+              if bad is not None:
+                  raise SystemExit(f"Corrupt Windows wheel member: {bad}")
+
+              names = set(archive.namelist())
+
+              required = {
+                  "alsaaudio/__init__.py",
+                  "alsaaudio/__init__.pyi",
+                  "alsaaudio/py.typed",
+              }
+
+              missing = sorted(required - names)
+              if missing:
+                  raise SystemExit(
+                      f"Windows typing wheel is missing files: {missing}"
+                  )
+
+              native_members = [
+                  name
+                  for name in names
+                  if name.endswith((".pyd", ".so", ".dll", ".dylib"))
+              ]
+
+              if native_members:
+                  raise SystemExit(
+                      f"Windows wheel unexpectedly contains native runtime: {native_members}"
+                  )
+
+              bytecode_members = [
+                  name
+                  for name in names
+                  if "__pycache__/" in name
+                  or name.endswith((".pyc", ".pyo"))
+              ]
+
+              if bytecode_members:
+                  raise SystemExit(
+                      f"Windows wheel unexpectedly contains bytecode: {bytecode_members}"
+                  )
+
+              metadata_name = next(
+                  name
+                  for name in names
+                  if name.endswith(".dist-info/METADATA")
+              )
+
+              metadata = BytesParser(
+                  policy=default
+              ).parsebytes(
+                  archive.read(metadata_name)
+              )
+
+          if metadata["Name"].lower() != "pyalsaaudio":
+              raise SystemExit(
+                  f"Unexpected package name: {metadata['Name']!r}"
+              )
+
+          if metadata["Version"] != version:
+              raise SystemExit(
+                  f"Unexpected package version: {metadata['Version']!r}"
+              )
+
+          classifiers = metadata.get_all("Classifier", [])
+          if "Operating System :: POSIX :: Linux" not in classifiers:
+              raise SystemExit(
+                  "Linux-only operating-system classifier is missing"
+              )
+
+          with tarfile.open(sdist, "r:gz") as archive:
+              names = archive.getnames()
+
+          forbidden_sdist = [
+              name
+              for name in names
+              if "__pycache__/" in name
+              or name.endswith((".pyc", ".pyo"))
+          ]
+
+          if forbidden_sdist:
+              raise SystemExit(
+                  f"Source distribution unexpectedly contains bytecode: {forbidden_sdist}"
+              )
+
+          required_sdist_suffixes = (
+              "/pyproject.toml",
+              "/setup.py",
+              "/MANIFEST.in",
+              "/LICENSE",
+              "/src/alsaaudio.c",
+              "/src/alsaaudio/__init__.py",
+              "/src/alsaaudio/__init__.pyi",
+              "/src/alsaaudio/py.typed",
+              "/ci/setup_cibuildwheel.sh",
+              "/ci_wheel_smoke.py",
+          )
+
+          for suffix in required_sdist_suffixes:
+              if not any(
+                  name.endswith(suffix)
+                  for name in names
+              ):
+                  raise SystemExit(
+                      f"Source distribution is missing: {suffix}"
+                  )
+
+          print(f"Windows sdist OK: {sdist.name}")
+          print(
+              "Windows wheel intentionally contains typing/package metadata only "
+              "and will NOT be published."
+          )
+          '@ | python -
+
+      - name: Verify Windows runtime is explicitly unsupported
+        shell: pwsh
+        run: |
+          $Wheel = @(
+              Get-ChildItem `
+                  -LiteralPath "windows-wheel" `
+                  -Filter "*.whl"
+          )
+
+          if ($Wheel.Count -ne 1) {
+              throw "Expected exactly one Windows typing-only wheel."
+          }
+
+          python -m pip install `
+              --force-reinstall `
+              --no-deps `
+              $Wheel[0].FullName
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Could not install Windows packaging-check wheel."
+          }
+
+          $ProbeDir = Join-Path $env:RUNNER_TEMP "pyalsaaudio-windows-probe"
+
+          Remove-Item `
+              -LiteralPath $ProbeDir `
+              -Recurse `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          New-Item -ItemType Directory -Path $ProbeDir | Out-Null
+
+          Push-Location $ProbeDir
+          try {
+              @'
+          try:
+              import alsaaudio
+          except ImportError as exc:
+              message = str(exc)
+              if "available only on Linux with ALSA" not in message:
+                  raise SystemExit(
+                      f"Unexpected Windows ImportError: {message!r}"
+                  )
+          else:
+              raise SystemExit(
+                  "pyalsaaudio unexpectedly imported as a Windows runtime"
+              )
+
+          print("Windows unsupported-runtime gate OK")
+          '@ | python -
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Windows unsupported-runtime gate failed."
+              }
+          }
+          finally {
+              Pop-Location
+          }
+
+      - name: Upload canonical source distribution
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+
+  linux-wheels:
+    name: Linux ${{ matrix.libc }} ${{ matrix.arch }} / CPython 3.14t
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - libc: manylinux
+            arch: x86_64
+            runner: ubuntu-24.04
+            build_selector: cp314t-manylinux_x86_64
+          - libc: manylinux
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            build_selector: cp314t-manylinux_aarch64
+          - libc: musllinux
+            arch: x86_64
+            runner: ubuntu-24.04
+            build_selector: cp314t-musllinux_x86_64
+          - libc: musllinux
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            build_selector: cp314t-musllinux_aarch64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up host Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Verify native runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Install source-build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade \
+            build \
+            "cibuildwheel==${CIBW_VERSION}"
+
+      - name: Build and validate independent source distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m build \
+            --sdist \
+            --outdir platform-sdist
+
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import tarfile
+
+          version = os.environ["PACKAGE_VERSION"]
+          dist = Path("platform-sdist")
+          sdist = dist / f"pyalsaaudio-{version}.tar.gz"
+
+          if list(dist.glob("*.tar.gz")) != [sdist]:
+              raise SystemExit(
+                  f"Unexpected Linux sdist set: {list(dist.glob('*.tar.gz'))}"
+              )
+
+          with tarfile.open(sdist, "r:gz") as archive:
+              names = archive.getnames()
+
+          required_suffixes = (
+              "/pyproject.toml",
+              "/setup.py",
+              "/MANIFEST.in",
+              "/src/alsaaudio.c",
+              "/src/alsaaudio/__init__.py",
+              "/src/alsaaudio/__init__.pyi",
+              "/src/alsaaudio/py.typed",
+              "/ci/setup_cibuildwheel.sh",
+              "/ci_wheel_smoke.py",
+          )
+
+          for suffix in required_suffixes:
+              if not any(
+                  name.endswith(suffix)
+                  for name in names
+              ):
+                  raise SystemExit(
+                      f"Linux sdist is missing: {suffix}"
+                  )
+
+          print(f"Independent Linux sdist OK: {sdist.name}")
+          PY
+
+      - name: Rebuild native wheel from sdist with cibuildwheel
+        shell: bash
+        env:
+          CIBW_BUILD: ${{ matrix.build_selector }}
+          CIBW_TEST_COMMAND: >-
+            python {project}/ci_wheel_smoke.py
+            0.11.1
+            --require-free-threaded
+        run: |
+          set -euo pipefail
+
+          source_root="$RUNNER_TEMP/pyalsaaudio-sdist-root"
+          rm -rf "$source_root"
+          mkdir -p "$source_root"
+
+          tar -xzf \
+            "platform-sdist/pyalsaaudio-${PACKAGE_VERSION}.tar.gz" \
+            -C "$source_root"
+
+          mapfile -t roots < <(
+            find "$source_root" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -type d \
+              -print
+          )
+
+          if [ "${#roots[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one extracted sdist root."
+            exit 1
+          fi
+
+          python -m cibuildwheel \
+            "${roots[0]}" \
+            --platform linux \
+            --output-dir wheelhouse
+
+      - name: Verify repaired native wheel
+        shell: bash
+        env:
+          EXPECTED_LIBC: ${{ matrix.libc }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from email.parser import BytesParser
+          from email.policy import default
+          from pathlib import Path
+          import os
+          import re
+          import zipfile
+
+          version = os.environ["PACKAGE_VERSION"]
+          libc = os.environ["EXPECTED_LIBC"]
+          arch = os.environ["EXPECTED_ARCH"]
+
+          wheels = list(Path("wheelhouse").glob("*.whl"))
+
+          if len(wheels) != 1:
+              raise SystemExit(
+                  f"Expected one repaired wheel, got: {wheels}"
+              )
+
+          wheel = wheels[0]
+          name = wheel.name
+
+          prefix = f"pyalsaaudio-{version}-cp314-cp314t-"
+
+          if not name.startswith(prefix):
+              raise SystemExit(
+                  f"Wheel is not CPython 3.14 free-threaded: {name}"
+              )
+
+          if libc not in name:
+              raise SystemExit(
+                  f"Wheel does not contain expected libc tag {libc!r}: {name}"
+              )
+
+          if not name.endswith(f"_{arch}.whl"):
+              raise SystemExit(
+                  f"Wheel does not target expected arch {arch!r}: {name}"
+              )
+
+          with zipfile.ZipFile(wheel) as archive:
+              bad = archive.testzip()
+              if bad is not None:
+                  raise SystemExit(
+                      f"Corrupt wheel member: {bad}"
+                  )
+
+              names = set(archive.namelist())
+
+              required = {
+                  "alsaaudio/__init__.py",
+                  "alsaaudio/__init__.pyi",
+                  "alsaaudio/py.typed",
+              }
+
+              missing = sorted(required - names)
+              if missing:
+                  raise SystemExit(
+                      f"Native wheel is missing package files: {missing}"
+                  )
+
+              extensions = [
+                  member
+                  for member in names
+                  if re.search(
+                      r"alsaaudio/_alsaaudio\..*\.so$",
+                      member,
+                  )
+              ]
+
+              if len(extensions) != 1:
+                  raise SystemExit(
+                      f"Expected one native ALSA extension: {extensions}"
+                  )
+
+              metadata_name = next(
+                  member
+                  for member in names
+                  if member.endswith(".dist-info/METADATA")
+              )
+
+              metadata = BytesParser(
+                  policy=default
+              ).parsebytes(
+                  archive.read(metadata_name)
+              )
+
+          if metadata["Name"].lower() != "pyalsaaudio":
+              raise SystemExit(
+                  f"Unexpected package name: {metadata['Name']!r}"
+              )
+
+          if metadata["Version"] != version:
+              raise SystemExit(
+                  f"Unexpected package version: {metadata['Version']!r}"
+              )
+
+          print(f"Native wheel OK: {name}")
+          PY
+
+      - name: Upload native wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.libc }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+
+  publish:
+    name: Publish platform-validated artifacts to devpi
+    needs:
+      - windows-source
+      - linux-wheels
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download all validated distributions
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*"
+          path: dist
+          merge-multiple: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Verify complete publish set
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from email.parser import BytesParser
+          from email.policy import default
+          from pathlib import Path
+          import os
+          import re
+          import tarfile
+          import zipfile
+
+          version = os.environ["PACKAGE_VERSION"]
+          dist = Path("dist")
+
+          sdists = list(dist.glob("*.tar.gz"))
+          wheels = sorted(dist.glob("*.whl"))
+
+          expected_sdist = dist / f"pyalsaaudio-{version}.tar.gz"
+
+          if sdists != [expected_sdist]:
+              raise SystemExit(
+                  f"Unexpected publish sdist set: {sdists}"
+              )
+
+          if len(wheels) != 4:
+              raise SystemExit(
+                  f"Expected four native wheels, got: {wheels}"
+              )
+
+          if any("py3-none-any" in wheel.name for wheel in wheels):
+              raise SystemExit(
+                  "Windows typing-only wheel leaked into publish set"
+              )
+
+          expected_targets = {
+              ("manylinux", "x86_64"),
+              ("manylinux", "aarch64"),
+              ("musllinux", "x86_64"),
+              ("musllinux", "aarch64"),
+          }
+
+          actual_targets = set()
+
+          for wheel in wheels:
+              name = wheel.name
+
+              if not name.startswith(
+                  f"pyalsaaudio-{version}-cp314-cp314t-"
+              ):
+                  raise SystemExit(
+                      f"Unexpected wheel interpreter/ABI tag: {name}"
+                  )
+
+              libc = (
+                  "musllinux"
+                  if "musllinux" in name
+                  else "manylinux"
+                  if "manylinux" in name
+                  else None
+              )
+
+              arch = (
+                  "aarch64"
+                  if name.endswith("_aarch64.whl")
+                  else "x86_64"
+                  if name.endswith("_x86_64.whl")
+                  else None
+              )
+
+              if libc is None or arch is None:
+                  raise SystemExit(
+                      f"Cannot classify native wheel: {name}"
+                  )
+
+              actual_targets.add((libc, arch))
+
+              with zipfile.ZipFile(wheel) as archive:
+                  bad = archive.testzip()
+                  if bad is not None:
+                      raise SystemExit(
+                          f"Corrupt wheel {name}: {bad}"
+                      )
+
+                  native = [
+                      member
+                      for member in archive.namelist()
+                      if re.search(
+                          r"alsaaudio/_alsaaudio\..*\.so$",
+                          member,
+                      )
+                  ]
+
+                  if len(native) != 1:
+                      raise SystemExit(
+                          f"{name} lacks exactly one native extension"
+                      )
+
+                  metadata_name = next(
+                      member
+                      for member in archive.namelist()
+                      if member.endswith(".dist-info/METADATA")
+                  )
+
+                  metadata = BytesParser(
+                      policy=default
+                  ).parsebytes(
+                      archive.read(metadata_name)
+                  )
+
+              if metadata["Version"] != version:
+                  raise SystemExit(
+                      f"{name} has wrong metadata version"
+                  )
+
+          if actual_targets != expected_targets:
+              raise SystemExit(
+                  f"Wrong platform coverage: {sorted(actual_targets)}"
+              )
+
+          with tarfile.open(expected_sdist, "r:gz") as archive:
+              names = archive.getnames()
+
+          if not any(
+              name.endswith("/ci/setup_cibuildwheel.sh")
+              for name in names
+          ):
+              raise SystemExit(
+                  "Publish sdist lacks cibuildwheel ALSA setup script"
+              )
+
+          print("Publish set:")
+          print(f"  {expected_sdist.name}")
+          for wheel in wheels:
+              print(f"  {wheel.name}")
+          PY
+
+      - name: Install publish tools
+        run: >-
+          python -m pip install
+          twine
+          devpi-client
+          devpi-tokens
+
+      - name: Twine check
+        run: python -m twine check dist/*
+
+      - name: Publish
+        env:
+          DEVPI_TOKEN: ${{ secrets.DEVPI_TOKEN }}
+          DEVPI_CLIENTDIR: ${{ runner.temp }}/devpi-client
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DEVPI_TOKEN:-}" ]; then
+            echo "::error::DEVPI_TOKEN is not available."
+            exit 1
+          fi
+
+          TOKEN_FILE="$RUNNER_TEMP/devpi-token"
+          printf '%s' "$DEVPI_TOKEN" > "$TOKEN_FILE"
+          chmod 600 "$TOKEN_FILE"
+
+          cleanup() {
+            rm -f "$TOKEN_FILE"
+            rm -rf "$DEVPI_CLIENTDIR"
+          }
+          trap cleanup EXIT
+
+          devpi use "$DEVPI_SERVER"
+          devpi token-login -f "$TOKEN_FILE"
+          devpi use "$DEVPI_TARGET_INDEX"
+          devpi upload dist/*

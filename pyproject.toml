@@ -1,6 +1,6 @@
 [project]
 name = "pyalsaaudio"
-version = "0.11.0"
+version = "0.11.1"
 description = "ALSA bindings"
 readme.text = """
 This package contains wrappers for accessing the ALSA API from Python.

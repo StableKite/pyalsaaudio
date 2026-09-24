@@ -1,3 +1,7 @@
 graft doc/
 graft examples/
 graft src/alsaaudio
+include src/alsaaudio.c
+graft ci/
+include ci_wheel_smoke.py
+global-exclude *.py[cod]
