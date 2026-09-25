@@ -1,0 +1,131 @@
+name: StableKite strict typing
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - stablekite/typing-pyright-ci
+
+jobs:
+  strict-typing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install native and typing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+          python -m pip install --upgrade pip build mypy
+          npm install --global pyright
+          pyright --version
+
+      - name: Strict-check canonical stubs
+        run: |
+          cat > pyrightconfig.stablekite.json <<'JSON'
+          {
+            "typeCheckingMode": "strict",
+            "include": ["src/alsaaudio-stubs"],
+            "pythonVersion": "3.12"
+          }
+          JSON
+          pyright --project pyrightconfig.stablekite.json
+          rm pyrightconfig.stablekite.json
+
+      - name: Build distributions
+        run: |
+          python -m build --outdir "$RUNNER_TEMP/dist"
+          python - <<'PY'
+          import os
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          dist = Path(os.environ["RUNNER_TEMP"]) / "dist"
+          wheel = next(dist.glob("*.whl"))
+          sdist = next(dist.glob("*.tar.gz"))
+          with zipfile.ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+          assert "alsaaudio-stubs/__init__.pyi" in names
+          assert any(
+              name.startswith("alsaaudio.") and name.endswith(".so")
+              for name in names
+          )
+          with tarfile.open(sdist, "r:gz") as archive:
+              names = set(archive.getnames())
+          assert any(
+              name.endswith("/src/alsaaudio-stubs/__init__.pyi")
+              for name in names
+          )
+          print(f"wheel={wheel.name}")
+          print(f"sdist={sdist.name}")
+          PY
+
+      - name: Validate installed package
+        run: |
+          python -m venv "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/bin/python" -m pip install mypy
+          "$RUNNER_TEMP/consumer/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl
+          "$RUNNER_TEMP/consumer/bin/python" - <<'PY'
+          import alsaaudio
+
+          print("module:", alsaaudio.__file__)
+          print("alsa:", alsaaudio.asoundlib_version())
+          print("pcms:", alsaaudio.pcms())
+          print("cards:", alsaaudio.cards())
+          print("card_indexes:", alsaaudio.card_indexes())
+          PY
+          "$RUNNER_TEMP/consumer/bin/stubtest" alsaaudio
+
+      - name: Strict-check installed-wheel consumer
+        run: |
+          mkdir -p "$RUNNER_TEMP/strict-consumer"
+          cat > "$RUNNER_TEMP/strict-consumer/consumer.py" <<'PY'
+          from typing import assert_type
+
+          import alsaaudio
+
+          assert_type(alsaaudio.pcms(), list[str])
+          assert_type(alsaaudio.pcms("capture"), list[str])
+          assert_type(alsaaudio.card_indexes(), list[int])
+          assert_type(alsaaudio.card_name(0), tuple[str, str])
+          assert_type(alsaaudio.cards(), list[str])
+          assert_type(alsaaudio.mixers(), list[str])
+          assert_type(alsaaudio.asoundlib_version(), str)
+
+          pcm = alsaaudio.PCM(type="playback", card=None)
+          assert_type(pcm.info()["rate"], int)
+          assert_type(pcm.info()["rate_numden"], tuple[int, int])
+          assert_type(pcm.info()["can_pause"], bool)
+          assert_type(pcm.getformats(), dict[str, int])
+          assert_type(pcm.setchannels(2), int)
+          assert_type(pcm.setrate(44100), int)
+          assert_type(pcm.write(memoryview(b"")), int)
+
+          def check_mixer(mixer: alsaaudio.Mixer) -> None:
+              assert_type(mixer.switchcap(), list[str])
+              assert_type(mixer.volumecap(), list[str])
+              assert_type(mixer.getvolume(), list[int])
+              assert_type(mixer.getrange(), list[int])
+              enum_result: tuple[()] | tuple[str, list[str]] = mixer.getenum()
+              assert_type(enum_result, tuple[()] | tuple[str, list[str]])
+              mixer.setvolume(
+                  50,
+                  channel=alsaaudio.MIXER_CHANNEL_ALL,
+                  pcmtype="capture",
+              )
+              mixer.setmute(1, channel=alsaaudio.MIXER_CHANNEL_ALL)
+              mixer.setrec(1, channel=alsaaudio.MIXER_CHANNEL_ALL)
+          PY
+          cat > "$RUNNER_TEMP/strict-consumer/pyrightconfig.json" <<'JSON'
+          {
+            "typeCheckingMode": "strict",
+            "include": ["consumer.py"],
+            "pythonVersion": "3.12"
+          }
+          JSON
+          pyright             --project "$RUNNER_TEMP/strict-consumer/pyrightconfig.json"             --pythonpath "$RUNNER_TEMP/consumer/bin/python"
+          "$RUNNER_TEMP/consumer/bin/mypy" --strict             "$RUNNER_TEMP/strict-consumer/consumer.py"
