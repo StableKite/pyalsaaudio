@@ -3133,6 +3133,9 @@ PyObject *PyInit_alsaaudio(void)
 	m = PyModule_Create(&alsaaudio_module);
 	if (!m)
 		return NULL;
+#ifdef Py_GIL_DISABLED
+	PyUnstable_Module_SetGIL(m, Py_MOD_GIL_NOT_USED);
+#endif
 
 #endif
 
