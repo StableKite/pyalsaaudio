@@ -1,5 +1,5 @@
 {
-  "include": ["_binary_wheel_backend.py", "src", "ci/check_cp315t_portable.py"],
+  "include": ["_binary_wheel_backend.py", "src", "ci/check_cp315t_portable.py", "tests/test_pcm_lifetime.py"],
   "typeCheckingMode": "strict",
   "pythonVersion": "3.15",
   "pythonPlatform": "Linux"

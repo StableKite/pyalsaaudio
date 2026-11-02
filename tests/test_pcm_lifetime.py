@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+from collections.abc import Callable
 import os
 from pathlib import Path
 from queue import SimpleQueue
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import cast
 import unittest
 import uuid
 import warnings
@@ -33,6 +35,57 @@ class PCMLifetimeTest(unittest.TestCase):
         with self.assertRaises(alsa.ALSAAudioError):
             pcm.state()
         pcm.close()
+
+    def test_null_capture_initializes_bytes_unwritten_by_native_SDK(self) -> None:
+        # The genuine null capture plugin reports frames without touching its
+        # destination. Check initialized allocation, not unsigned PCM silence.
+        for sample_format, channels, frame_size in (
+            (alsa.PCM_FORMAT_S16_LE, 2, 4), (alsa.PCM_FORMAT_U8, 1, 1)
+        ):
+            with self.subTest(format=sample_format, channels=channels):
+                pcm = alsa.PCM(
+                    type=alsa.PCM_CAPTURE, device="null", rate=48000,
+                    channels=channels, format=sample_format, periodsize=64,
+                )
+                try:
+                    for _ in range(8):
+                        frames, data = pcm.read()
+                        self.assertEqual(frames, 64)
+                        self.assertEqual(len(data), frames * frame_size)
+                        # Aggregate count only: failures must not print prior
+                        # process memory from the uninitialized allocation.
+                        self.assertEqual(sum(value != 0 for value in data), 0)
+                finally:
+                    pcm.close()
+
+    def test_file_EOF_initializes_unwritten_bytes_preserving_real_frames(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pyalsa-known-input-") as directory:
+            path = Path(directory) / "actual-input.raw"
+            payload = b"\x13\x00\x24\x00" * 64
+            _ = path.write_bytes(payload)
+            name = "known_capture_" + uuid.uuid4().hex
+            self.install_file_PCM(name, path)
+            pcm = self.pcm(device=name)
+            try:
+                frames, data = pcm.read()
+                self.assertEqual(frames, 64)
+                self.assertTrue(data == payload, "native known input changed")
+                frames, data = pcm.read()
+                # Original file/null SDK still truthfully returns64 here.
+                # Preserve that count while initializing bytes it did not fill.
+                self.assertEqual(frames, 64)
+                self.assertEqual(len(data), 256)
+                self.assertEqual(sum(value != 0 for value in data), 0)
+                # Supply new input after EOF; native read() continues from its
+                # actual file offset. Old allocation contents are not input.
+                next_payload = b"\x35\x00\x46\x00" * 64
+                with path.open("ab") as stream:
+                    self.assertEqual(stream.write(next_payload), len(next_payload))
+                frames, data = pcm.read()
+                self.assertEqual(frames, 64)
+                self.assertTrue(data == next_payload, "new native input changed")
+            finally:
+                pcm.close()
 
     def test_argument_callback_can_close_its_real_PCM(self) -> None:
         pcm = self.pcm()
@@ -67,7 +120,7 @@ class PCMLifetimeTest(unittest.TestCase):
 
     def test_warning_callback_can_close_its_real_PCM(self) -> None:
         pcm = self.pcm()
-        callbacks = []
+        callbacks: list[bool] = []
 
         def warning(*args: object, **kwargs: object) -> None:
             callbacks.append(True)
@@ -99,7 +152,7 @@ class PCMLifetimeTest(unittest.TestCase):
             pcm.close()
 
     def test_shared_handle_read_config_query_and_multiple_close(self) -> None:
-        for cycle in range(16):
+        for _ in range(16):
             pcm = self.pcm()
             start = threading.Barrier(7)
             live = [threading.Event() for _ in range(4)]
@@ -109,7 +162,7 @@ class PCMLifetimeTest(unittest.TestCase):
             def reader(index: int) -> None:
                 try:
                     start.wait(timeout=10)
-                    for iteration in range(128):
+                    for _ in range(128):
                         try:
                             count, data = pcm.read()
                         except alsa.ALSAAudioError:
@@ -141,7 +194,7 @@ class PCMLifetimeTest(unittest.TestCase):
                     start.wait(timeout=10)
                     for event in live:
                         self.assertTrue(event.wait(10))
-                    for iteration in range(8):
+                    for _ in range(8):
                         pcm.close()
                 except BaseException as error:
                     errors.put(error)
@@ -189,7 +242,7 @@ class PCMLifetimeTest(unittest.TestCase):
         self.assertEqual(library.snd_config_merge(current, extra, 0), 0)
 
     def test_close_keeps_handle_alive_through_real_blocked_native_read(self) -> None:
-        for cycle in range(8):
+        for _ in range(8):
             with tempfile.TemporaryDirectory(prefix="pyalsa-native-fifo-") as directory:
                 fifo = Path(directory) / "actual-audio-input"
                 os.mkfifo(fifo)
@@ -232,7 +285,7 @@ class PCMLifetimeTest(unittest.TestCase):
                     if isinstance(result, BaseException):
                         raise result
                     self.assertEqual(result, (64, payload))
-                    remaining = []
+                    remaining: list[int] = []
                     for path in Path("/proc/self/fd").iterdir():
                         try:
                             if os.readlink(path) == str(fifo):
@@ -322,7 +375,8 @@ class PCMLifetimeTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    assert sys.flags.gil is None and not sys._is_gil_enabled()
+    gil_enabled = cast(Callable[[], bool], getattr(sys, "_is_gil_enabled"))
+    assert sys.flags.gil is None and not gil_enabled()
     assert not any(os.environ.get(n) for n in (
         "PYTHON_GIL", "ALSA_CONFIG_PATH", "ALSA_CONFIG_DIR", "ALSA_PLUGIN_DIR"
     ))

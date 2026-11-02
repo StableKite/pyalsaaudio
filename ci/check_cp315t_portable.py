@@ -47,7 +47,7 @@ def main() -> None:
         )
     )
     dist = importlib.metadata.distribution("pyalsaaudio")
-    assert dist.version == "0.11.0+stablekite.1"
+    assert dist.version == "0.11.0+stablekite.2"
     direct = json.loads(dist.read_text("direct_url.json") or "null")
     assert direct["url"] == "https://github.com/StableKite/pyalsaaudio.git"
     assert direct["vcs_info"]["commit_id"] == os.environ["GITHUB_SHA"]
