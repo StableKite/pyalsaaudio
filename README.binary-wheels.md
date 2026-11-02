@@ -5,7 +5,7 @@ for the recorded source snapshot on Linux x86_64, CPython 3.15t and glibc 2.39+.
 pip performs downloading, dependency resolution and SHA256 validation.
 No consumer SDK setup or extra build flag is required for this binary path.
 
-Version `0.11.0+stablekite.1` includes the real ALSA 1.2.14 shared library and
+Version `0.11.0+stablekite.2` includes the real ALSA 1.2.14 shared library and
 its original configuration tree together in `pyalsaaudio_runtime`. The SDK
 locates that tree relative to its loaded library. Standard system/per-user
 configuration hooks and explicit ALSA preferences remain available. Normal
@@ -19,8 +19,9 @@ format changes are serialized independently, with Python callbacks outside that
 I/O lock. Normal close with no other call in flight remains synchronous.
 
 The public Python API and all 1,835 SDK exports match the preceding engineering
-build. The private PCM object layout changes and requires rebuilding the whole
-extension. Four numeric setter annotations include the actual `__index__`
+build. The preceding lease revision changed the private PCM layout and requires a
+whole-extension rebuild. This capture-initialization revision retains that
+120-byte private layout and the public SDK ABI. Four numeric setter annotations include the actual `__index__`
 protocol supported by their native argument parser.
 
 The original PEP 517 backend and its build requirements are preserved. Changed
@@ -44,3 +45,13 @@ Corresponding SDK source and LGPL license are recorded in
 `pyalsaaudio_runtime/SOURCES.alsa-lib.txt` and `COPYING.alsa-lib`.
 
 These are engineering dependency artifacts, not a StableKite release.
+
+
+Capture allocations are initialized before the genuine SDK read. A native null
+or file-at-EOF plugin may report frames without filling all destination bytes;
+those bytes are now initialized. Real SDK-written samples and native frame
+counts are preserved, including new input appended after EOF. Zero bytes do
+not imply unsigned PCM silence. Nine genuine PCM regressions retain all seven
+prior cases and add null/S16/U8 and file-EOF/input-preservation coverage. Strict
+typing includes the entire native regression test file as well as production
+Python, public stubs, delivery backend and CI validator. No diagnostic ignores.

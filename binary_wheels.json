@@ -1,12 +1,12 @@
 {
-  "source_commit": "493012eeec7b36dc0aaa8682e72a6523290cc4a5",
+  "source_commit": "52f90bd33ca9123ce7f2d80162577f13458fa0c5",
   "source_backend": "setuptools.build_meta",
   "source_backend_path": [],
   "minimum_glibc": [
     2,
     39
   ],
-  "source_project": "8e3d266fc429e67610d784c32bce3d510609d920dbe8f02a730a4748509073a5",
+  "source_project": "abf40d95aae9bded79c6beb039d7ed39700468a0635813505f654347f906fb4e",
   "delivery_paths": [
     "_binary_wheel_backend.py",
     "binary_wheels.json",
@@ -22,19 +22,19 @@
   ],
   "delivery_source_hashes": {
     "_binary_wheel_backend.py": "4f4f8a85c2f7478dc1a91ec330034469a37a3dab19c58fe771c8ec0a2156e275",
-    "README.binary-wheels.md": "4bfbb13c1984011a08d2247b5356a5ca368a55c21551b9869602f94619ebed16",
-    "pyproject.toml": "c0c78a219598696178b5c9923a097703e06963cebb0bf6e043ac800d2800f647",
+    "README.binary-wheels.md": "e658b16f8b8fb485986bd312757d2c09d6df36fc2ad92d4a9f3d4574554e1e34",
+    "pyproject.toml": "55b6534f884978dd561d97e354fae3bec4b3d04cd819a504d7ab558b03d37ef6",
     "MANIFEST.in": "013534c222073517537d07a3f63d3f4b168d8dac9a98d27759c3656800c149f0",
     ".gitattributes": "ccd2c34906f956859f56d5d59f0e0d80755dce7c77ccf6a15154434c61e1ae65",
-    "pyrightconfig.strict.json": "48d89791c8d1d73c2bd3c1570e1d48708ca181fdb4add3dad454c8c3e7abaaa2",
-    "ci/check_cp315t_portable.py": "7fdc2392e693d6bff4d7261d4a1e24c45d82721db27e8ddb21cee0ce555134e0",
+    "pyrightconfig.strict.json": "1c75177d84cf2db984cb00ba0be67a4694a237b941892912efd9dcf514b0557c",
+    "ci/check_cp315t_portable.py": "2cc22805ac5ae85e872e10617f1d86d2e161ccf07f2ea99b1b1ee38f869cf7bf",
     ".github/workflows/cp315t-portable.yml": "a8b00d2989bf135025a4ffb8fcd5eda26be7594934d78fbde487a8ae58f91eb8",
     ".github/workflows/release.yml": "60ac1c1523ae7612c5737af62b85cf569124cf3592c110c25c90e7852b6982b8",
-    "tests/test_pcm_lifetime.py": "3a3b134ad7728cbb454c26567280cf6d5bd357838fa0196316e104c4ecdf6840"
+    "tests/test_pcm_lifetime.py": "f823bb1741d6eb8c8fad3f313030540d5a2555f31f20195d6d31d9934729900e"
   },
   "artifact": {
-    "filename": "pyalsaaudio-0.11.0+stablekite.1-cp315-cp315t-manylinux_2_38_x86_64.whl",
-    "url": "https://github.com/StableKite/pyalsaaudio/releases/download/cp315t-portable-20261102-1/pyalsaaudio-0.11.0+stablekite.1-cp315-cp315t-manylinux_2_38_x86_64.whl",
-    "sha256": "42faa97f7398de5c18579471c8d2717ba158392dc6a1f5dac170e524e3ec719c"
+    "filename": "pyalsaaudio-0.11.0+stablekite.2-cp315-cp315t-manylinux_2_38_x86_64.whl",
+    "url": "https://github.com/StableKite/pyalsaaudio/releases/download/cp315t-portable-20261102-2/pyalsaaudio-0.11.0+stablekite.2-cp315-cp315t-manylinux_2_38_x86_64.whl",
+    "sha256": "f81105a76d2056eb60bb3029472dec6d92c228c8e346ea129800c2dc350d3fa5"
   }
 }
